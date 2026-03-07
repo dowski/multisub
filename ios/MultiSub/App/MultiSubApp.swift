@@ -1,4 +1,5 @@
 import SwiftUI
+import ConvexMobile
 
 @main
 struct MultiSubApp: App {
@@ -6,6 +7,10 @@ struct MultiSubApp: App {
     @StateObject private var natureVM = NatureTabViewModel()
     @StateObject private var gamesVM = GamesTabViewModel()
     @StateObject private var vibesVM = VibesTabViewModel()
+  
+  init() {
+    initConvexLogging()
+  }
 
     var body: some Scene {
         WindowGroup {
