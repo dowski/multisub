@@ -74,5 +74,7 @@ struct NatureTabView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("Nature")
+        .onAppear { vm.subscribe() }
+        .onDisappear { vm.unsubscribe() }
     }
 }

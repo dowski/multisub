@@ -71,6 +71,8 @@ struct VibesTabView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("Vibes")
+        .onAppear { vm.subscribe() }
+        .onDisappear { vm.unsubscribe() }
     }
 }
 

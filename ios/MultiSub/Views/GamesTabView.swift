@@ -82,6 +82,8 @@ struct GamesTabView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("Games")
+        .onAppear { vm.subscribe() }
+        .onDisappear { vm.unsubscribe() }
     }
 
     private func suitName(_ suit: String) -> String {
