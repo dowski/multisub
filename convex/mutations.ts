@@ -31,9 +31,39 @@ function randomHex(): string {
   );
 }
 
+const TABLE_TYPES = [
+  "colors",
+  "diceRolls",
+  "animals",
+  "weather",
+  "playingCards",
+  "coordinates",
+  "scores",
+  "moods",
+  "words",
+  "planets",
+] as const;
+
+type TableType = (typeof TABLE_TYPES)[number];
+
+/** Build an independent random schedule of timestamps within 60 seconds. */
+function buildSchedule(): number[] {
+  const times: number[] = [];
+  let elapsed = 0;
+  while (elapsed < 60_000) {
+    const delay = randInt(5000, 10000);
+    elapsed += delay;
+    if (elapsed <= 60_000) {
+      times.push(elapsed);
+    }
+  }
+  return times;
+}
+
 /**
  * Public mutation: triggers a 1-minute cycle of random updates.
- * Updates happen every 5-10 seconds, then stop.
+ * Each of the 10 data types gets its own independent update schedule,
+ * so they all update at different times throughout the minute.
  */
 export const triggerUpdates = mutation({
   handler: async (ctx) => {
@@ -50,139 +80,139 @@ export const triggerUpdates = mutation({
       await ctx.db.delete(doc._id);
     }
 
-    // Calculate how many updates fit in ~60 seconds at 5-10s intervals.
-    // We'll pre-schedule all of them now with random delays.
-    const updates: number[] = [];
-    let elapsed = 0;
-    while (elapsed < 60_000) {
-      const delay = randInt(5000, 10000);
-      elapsed += delay;
-      if (elapsed <= 60_000) {
-        updates.push(elapsed);
+    // For each table type, generate an independent schedule and schedule updates
+    let totalScheduled = 0;
+    for (const tableType of TABLE_TYPES) {
+      // Immediate first update for each type
+      await updateOneTable(ctx.db, tableType);
+
+      const schedule = buildSchedule();
+      totalScheduled += schedule.length;
+      for (const delayMs of schedule) {
+        await ctx.scheduler.runAfter(delayMs, internal.mutations.updateTable, {
+          tableType,
+        });
       }
     }
 
+    // Schedule a single "mark done" at 61 seconds
     const statusId = await ctx.db.insert("updateStatus", {
       active: true,
       startedAt: Date.now(),
-      updatesRemaining: updates.length,
+      updatesRemaining: totalScheduled,
     });
+    await ctx.scheduler.runAfter(61_000, internal.mutations.markDone, { statusId });
 
-    // Do an immediate first update
-    await doRandomUpdate(ctx);
-
-    // Schedule each future update
-    for (let i = 0; i < updates.length; i++) {
-      await ctx.scheduler.runAfter(updates[i], internal.mutations.scheduledUpdate, {
-        statusId,
-        index: i,
-        total: updates.length,
-      });
-    }
-
-    return { status: "started", totalUpdates: updates.length + 1 };
+    return { status: "started", totalScheduled: totalScheduled + TABLE_TYPES.length };
   },
 });
 
 /**
- * Internal scheduled mutation: performs one round of random updates.
+ * Internal mutation: updates a single table type with fresh random data.
  */
-export const scheduledUpdate = internalMutation({
+export const updateTable = internalMutation({
+  args: {
+    tableType: v.string(),
+  },
+  handler: async (ctx, { tableType }) => {
+    await updateOneTable(ctx.db, tableType as TableType);
+  },
+});
+
+/**
+ * Internal mutation: marks the update cycle as done after ~60 seconds.
+ */
+export const markDone = internalMutation({
   args: {
     statusId: v.id("updateStatus"),
-    index: v.number(),
-    total: v.number(),
   },
-  handler: async (ctx, { statusId, index, total }) => {
-    await doRandomUpdate(ctx);
-
-    // Update remaining count
-    const remaining = total - (index + 1);
+  handler: async (ctx, { statusId }) => {
     const status = await ctx.db.get(statusId);
     if (status) {
-      await ctx.db.patch(statusId, {
-        updatesRemaining: remaining,
-        active: remaining > 0,
-      });
+      await ctx.db.patch(statusId, { active: false, updatesRemaining: 0 });
     }
   },
 });
 
-async function doRandomUpdate(ctx: { db: any }) {
-  // --- Colors ---
-  const oldColors = await ctx.db.query("colors").collect();
-  for (const c of oldColors) await ctx.db.delete(c._id);
-  const hex = randomHex();
-  await ctx.db.insert("colors", { hex, name: pick(COLOR_NAMES) });
-
-  // --- Dice Rolls ---
-  const oldDice = await ctx.db.query("diceRolls").collect();
-  for (const d of oldDice) await ctx.db.delete(d._id);
-  const die1 = randInt(1, 6);
-  const die2 = randInt(1, 6);
-  await ctx.db.insert("diceRolls", { die1, die2, total: die1 + die2 });
-
-  // --- Animals ---
-  const oldAnimals = await ctx.db.query("animals").collect();
-  for (const a of oldAnimals) await ctx.db.delete(a._id);
-  const animal = pick(ANIMALS);
-  await ctx.db.insert("animals", animal);
-
-  // --- Weather ---
-  const oldWeather = await ctx.db.query("weather").collect();
-  for (const w of oldWeather) await ctx.db.delete(w._id);
-  await ctx.db.insert("weather", {
-    condition: pick(WEATHER_CONDITIONS),
-    tempF: randInt(10, 110),
-    humidity: randInt(10, 100),
-  });
-
-  // --- Playing Cards ---
-  const oldCards = await ctx.db.query("playingCards").collect();
-  for (const c of oldCards) await ctx.db.delete(c._id);
-  const suit = pick(SUITS);
-  const rank = pick(RANKS);
-  await ctx.db.insert("playingCards", { suit, rank, display: `${rank}${suit}` });
-
-  // --- Coordinates ---
-  const oldCoords = await ctx.db.query("coordinates").collect();
-  for (const c of oldCoords) await ctx.db.delete(c._id);
-  await ctx.db.insert("coordinates", {
-    lat: Math.round((Math.random() * 180 - 90) * 1000) / 1000,
-    lng: Math.round((Math.random() * 360 - 180) * 1000) / 1000,
-    label: pick(LOCATION_LABELS),
-  });
-
-  // --- Scores ---
-  const oldScores = await ctx.db.query("scores").collect();
-  for (const s of oldScores) await ctx.db.delete(s._id);
-  await ctx.db.insert("scores", {
-    home: randInt(0, 120),
-    away: randInt(0, 120),
-    sport: pick(SPORTS),
-  });
-
-  // --- Moods ---
-  const oldMoods = await ctx.db.query("moods").collect();
-  for (const m of oldMoods) await ctx.db.delete(m._id);
-  const mood = pick(MOODS);
-  await ctx.db.insert("moods", {
-    ...mood,
-    intensity: randInt(1, 10),
-  });
-
-  // --- Words ---
-  const oldWords = await ctx.db.query("words").collect();
-  for (const w of oldWords) await ctx.db.delete(w._id);
-  const word = pick(WORDS);
-  await ctx.db.insert("words", {
-    ...word,
-    length: word.word.length,
-  });
-
-  // --- Planets ---
-  const oldPlanets = await ctx.db.query("planets").collect();
-  for (const p of oldPlanets) await ctx.db.delete(p._id);
-  const planet = pick(PLANETS);
-  await ctx.db.insert("planets", planet);
+async function updateOneTable(db: any, tableType: TableType) {
+  switch (tableType) {
+    case "colors": {
+      const old = await db.query("colors").collect();
+      for (const doc of old) await db.delete(doc._id);
+      await db.insert("colors", { hex: randomHex(), name: pick(COLOR_NAMES) });
+      break;
+    }
+    case "diceRolls": {
+      const old = await db.query("diceRolls").collect();
+      for (const doc of old) await db.delete(doc._id);
+      const die1 = randInt(1, 6);
+      const die2 = randInt(1, 6);
+      await db.insert("diceRolls", { die1, die2, total: die1 + die2 });
+      break;
+    }
+    case "animals": {
+      const old = await db.query("animals").collect();
+      for (const doc of old) await db.delete(doc._id);
+      await db.insert("animals", pick(ANIMALS));
+      break;
+    }
+    case "weather": {
+      const old = await db.query("weather").collect();
+      for (const doc of old) await db.delete(doc._id);
+      await db.insert("weather", {
+        condition: pick(WEATHER_CONDITIONS),
+        tempF: randInt(10, 110),
+        humidity: randInt(10, 100),
+      });
+      break;
+    }
+    case "playingCards": {
+      const old = await db.query("playingCards").collect();
+      for (const doc of old) await db.delete(doc._id);
+      const suit = pick(SUITS);
+      const rank = pick(RANKS);
+      await db.insert("playingCards", { suit, rank, display: `${rank}${suit}` });
+      break;
+    }
+    case "coordinates": {
+      const old = await db.query("coordinates").collect();
+      for (const doc of old) await db.delete(doc._id);
+      await db.insert("coordinates", {
+        lat: Math.round((Math.random() * 180 - 90) * 1000) / 1000,
+        lng: Math.round((Math.random() * 360 - 180) * 1000) / 1000,
+        label: pick(LOCATION_LABELS),
+      });
+      break;
+    }
+    case "scores": {
+      const old = await db.query("scores").collect();
+      for (const doc of old) await db.delete(doc._id);
+      await db.insert("scores", {
+        home: randInt(0, 120),
+        away: randInt(0, 120),
+        sport: pick(SPORTS),
+      });
+      break;
+    }
+    case "moods": {
+      const old = await db.query("moods").collect();
+      for (const doc of old) await db.delete(doc._id);
+      const mood = pick(MOODS);
+      await db.insert("moods", { ...mood, intensity: randInt(1, 10) });
+      break;
+    }
+    case "words": {
+      const old = await db.query("words").collect();
+      for (const doc of old) await db.delete(doc._id);
+      const word = pick(WORDS);
+      await db.insert("words", { ...word, length: word.word.length });
+      break;
+    }
+    case "planets": {
+      const old = await db.query("planets").collect();
+      for (const doc of old) await db.delete(doc._id);
+      await db.insert("planets", pick(PLANETS));
+      break;
+    }
+  }
 }
