@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct VibesTabView: View {
-    @EnvironmentObject var vm: VibesTabViewModel
+    @StateObject private var vm = VibesTabViewModel()
 
     var body: some View {
         ScrollView {

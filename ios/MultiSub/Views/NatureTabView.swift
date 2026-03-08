@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct NatureTabView: View {
-    @EnvironmentObject var vm: NatureTabViewModel
+    @StateObject private var vm = NatureTabViewModel()
 
     var body: some View {
         ScrollView {

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct GamesTabView: View {
-    @EnvironmentObject var vm: GamesTabViewModel
+    @StateObject private var vm = GamesTabViewModel()
 
     var body: some View {
         ScrollView {
