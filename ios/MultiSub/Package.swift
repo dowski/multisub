@@ -12,7 +12,7 @@ let package = Package(
     name: "MultiSub",
     platforms: [.iOS(.v16)],
     dependencies: [
-        .package(url: "https://github.com/get-convex/convex-swift", from: "0.5.0"),
+        .package(url: "https://github.com/get-convex/convex-swift", from: "0.8.1"),
     ],
     targets: [
         .executableTarget(
